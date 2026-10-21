@@ -1,0 +1,959 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-950 text-slate-100">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sheet Music Auto-Scroller</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Font Awesome Icons -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" />
+  
+  <!-- PDF.js library -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+
+  <style>
+    /* Custom scrollbar styling for sheet viewer */
+    #sheet-container::-webkit-scrollbar {
+      width: 10px;
+    }
+    #sheet-container::-webkit-scrollbar-track {
+      background: #0f172a;
+    }
+    #sheet-container::-webkit-scrollbar-thumb {
+      background: #334155;
+      border-radius: 5px;
+    }
+    #sheet-container::-webkit-scrollbar-thumb:hover {
+      background: #475569;
+    }
+
+    /* Subtle pulse effect for active scrolling status */
+    @keyframes pulse-emerald {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.85; transform: scale(1.02); }
+    }
+    .active-scroll-badge {
+      animation: pulse-emerald 2s infinite ease-in-out;
+    }
+
+    /* Canvas shadow effect for realistic sheet look */
+    .sheet-page-canvas {
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+    }
+  </style>
+</head>
+<body class="h-full flex flex-col font-sans overflow-hidden select-none bg-slate-950 text-slate-100">
+
+  <!-- TOP NAVBAR / TOOLBAR -->
+  <header class="bg-slate-900/90 border-b border-slate-800 px-4 py-2.5 flex flex-wrap items-center justify-between gap-3 backdrop-blur z-20">
+    <div class="flex items-center gap-3">
+      <div class="bg-gradient-to-tr from-emerald-600 to-teal-400 p-2.5 rounded-xl text-white shadow-lg shadow-emerald-950/40">
+        <i class="fa-solid font-bold fa-music text-xl"></i>
+      </div>
+      <div>
+        <h1 class="font-bold text-lg leading-tight tracking-wide text-slate-100 flex items-center gap-2">
+          Virtuoso AutoScroll
+          <span id="active-status-badge" class="px-2 py-0.5 text-xs font-semibold rounded-full bg-slate-800 text-slate-400 border border-slate-700">
+            PAUSED
+          </span>
+        </h1>
+        <p class="text-xs text-slate-400 hidden sm:block">Ultra-Precision Sheet Music Follower for iPad & Stage</p>
+      </div>
+    </div>
+
+    <!-- MAIN SCROLL CONTROLS -->
+    <div class="flex items-center gap-2">
+      <!-- Play / Pause Button -->
+      <button id="btn-toggle-scroll" class="px-5 py-2.5 rounded-xl font-bold text-sm bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white shadow-lg shadow-emerald-950/50 transition-all flex items-center gap-2">
+        <i id="icon-toggle-scroll" class="fa-solid fa-play"></i>
+        <span id="text-toggle-scroll">Start Auto-Scroll</span>
+      </button>
+
+      <!-- Step Top/Bottom Shortcuts -->
+      <button id="btn-scroll-top" title="Reset to Top" class="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+        <i class="fa-solid fa-arrow-up-to-line"></i>
+      </button>
+    </div>
+
+    <!-- QUICK UTILITY TOGGLES -->
+    <div class="flex items-center gap-2">
+      <!-- Upload Button -->
+      <label class="cursor-pointer px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-2 transition">
+        <i class="fa-solid fa-file-arrow-up text-emerald-400"></i>
+        <span>Open File</span>
+        <input type="file" id="file-input" accept=".pdf,image/*" class="hidden" />
+      </label>
+
+      <!-- Metronome Button -->
+      <button id="btn-metronome-toggle" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-2 transition">
+        <i class="fa-solid fa-stopwatch text-amber-400"></i>
+        <span id="metronome-btn-text">Metronome Off</span>
+      </button>
+
+      <!-- Controls Panel Drawer Toggle -->
+      <button id="btn-toggle-drawer" class="p-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition">
+        <i class="fa-solid fa-sliders text-teal-400"></i>
+      </button>
+    </div>
+  </header>
+
+  <!-- MAIN CONTENT CONTAINER -->
+  <div class="flex-1 flex relative overflow-hidden">
+    
+    <!-- SHEET MUSIC CANVAS DISPLAY CONTAINER -->
+    <main id="sheet-container" class="flex-1 overflow-y-auto relative bg-slate-950 flex flex-col items-center p-4 sm:p-8 space-y-6">
+      
+      <!-- START DELAY OVERLAY COUNTDOWN -->
+      <div id="delay-countdown-overlay" class="hidden fixed inset-0 bg-slate-950/80 backdrop-blur-md z-30 flex flex-col items-center justify-center pointer-events-auto">
+        <div class="text-center space-y-3 p-6 bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl max-w-sm w-full mx-4">
+          <div class="text-emerald-400 text-4xl font-black">
+            <i class="fa-solid fa-hourglass-start animate-spin"></i>
+          </div>
+          <h3 class="text-xl font-bold text-slate-100">Get Ready to Play</h3>
+          <p class="text-xs text-slate-400">Position your hands on the piano...</p>
+          <div id="countdown-number" class="text-6xl font-black text-emerald-400 my-2">3</div>
+          <button id="btn-cancel-delay" class="px-4 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-xs text-slate-300 font-semibold transition">
+            Cancel
+          </button>
+        </div>
+      </div>
+
+      <!-- CANVAS SHEET RENDER HOLDER -->
+      <div id="pages-wrapper" class="w-full max-w-4xl flex flex-col items-center space-y-6 relative">
+        <!-- Dynamic Sheet Pages / SVG Sample rendered here -->
+      </div>
+
+      <!-- FLOATING ACTION TAP OVERLAY FOR TOUCHSCREEN / PIANO STAND -->
+      <div class="sticky bottom-6 z-10 flex items-center justify-center">
+        <div class="bg-slate-900/90 border border-slate-800 backdrop-blur-md rounded-2xl p-2 px-4 shadow-2xl flex items-center gap-4 text-xs font-semibold">
+          <button id="btn-page-prev" class="p-2 hover:bg-slate-800 rounded-lg text-slate-300 transition flex items-center gap-1">
+            <i class="fa-solid fa-chevron-left"></i> Prev
+          </button>
+          
+          <span id="page-counter" class="text-slate-400 border-x border-slate-800 px-3">
+            Page 1 / 1
+          </span>
+
+          <button id="btn-page-next" class="p-2 hover:bg-slate-800 rounded-lg text-slate-300 transition flex items-center gap-1">
+            Next <i class="fa-solid fa-chevron-right"></i>
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <!-- RIGHT SETTINGS DRAWER / CONTROL PANEL -->
+    <aside id="controls-drawer" class="w-80 bg-slate-900/95 border-l border-slate-800 p-5 overflow-y-auto flex flex-col space-y-6 transition-all duration-300 z-20">
+      
+      <!-- DRAWER HEADER -->
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <h2 class="font-bold text-sm tracking-wide text-slate-200 flex items-center gap-2">
+          <i class="fa-solid fa-sliders text-emerald-400"></i> Settings & Audio Engine
+        </h2>
+        <button id="btn-close-drawer" class="text-slate-400 hover:text-slate-200 text-sm">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <!-- SECTION 1: ULTRA-FINE SCROLL SPEED CONTROLS -->
+      <div class="space-y-3 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800">
+        <div class="flex items-center justify-between">
+          <label for="speed-slider" class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+            <i class="fa-solid fa-gauge-high text-teal-400"></i> Scroll Speed
+          </label>
+          <span id="speed-val" class="text-xs font-bold text-emerald-400 bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-800/50">0.25x</span>
+        </div>
+        
+        <!-- Extended Range: 0.01x to 3.0x with 0.01 Precision -->
+        <input type="range" id="speed-slider" min="0.01" max="3.00" step="0.01" value="0.25" class="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500" />
+        
+        <div class="flex justify-between text-[10px] text-slate-500 font-semibold">
+          <span>0.01x (Ultra-Slow)</span>
+          <span>1.00x (Standard)</span>
+          <span>3.00x (Fast)</span>
+        </div>
+
+        <!-- SPEED PRESETS BUTTONS -->
+        <div class="pt-2 border-t border-slate-800/80 space-y-1.5">
+          <label class="text-[11px] font-medium text-slate-400">Speed Presets:</label>
+          <div class="grid grid-cols-5 gap-1 text-[10px] font-bold">
+            <button data-speed="0.05" class="btn-preset py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition">0.05x</button>
+            <button data-speed="0.10" class="btn-preset py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition">0.10x</button>
+            <button data-speed="0.25" class="btn-preset py-1 bg-emerald-950/80 text-emerald-400 border border-emerald-800 rounded transition">0.25x</button>
+            <button data-speed="0.50" class="btn-preset py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition">0.50x</button>
+            <button data-speed="1.00" class="btn-preset py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition">1.00x</button>
+          </div>
+        </div>
+
+        <!-- Start Delay Slider -->
+        <div class="pt-2 border-t border-slate-800/80">
+          <div class="flex items-center justify-between mb-1">
+            <label for="delay-slider" class="text-xs font-medium text-slate-400">
+              Start Delay Countdown
+            </label>
+            <span id="delay-val" class="text-xs text-slate-300 font-bold">0 sec</span>
+          </div>
+          <input type="range" id="delay-slider" min="0" max="10" step="1" value="0" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-teal-500" />
+        </div>
+      </div>
+
+      <!-- SECTION 2: AUDIO ENGINE (PLAY-TO-SCROLL & MIC) -->
+      <div class="space-y-3 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800">
+        <div class="flex items-center justify-between">
+          <label class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+            <i class="fa-solid fa-microphone text-rose-400"></i> Piano Mic Engine
+          </label>
+          <button id="btn-toggle-mic" class="px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+            Enable Mic
+          </button>
+        </div>
+
+        <!-- MIC TRIGGER MODE SELECTION -->
+        <div class="space-y-1.5">
+          <label class="text-[11px] text-slate-400">Mic Detection Mode:</label>
+          <select id="mic-mode-select" disabled class="w-full bg-slate-900 text-slate-200 border border-slate-700 rounded-lg p-2 text-xs focus:ring-1 focus:ring-emerald-500 outline-none disabled:opacity-50">
+            <option value="play-to-scroll">Continuous Playing (Play-to-Scroll)</option>
+            <option value="clap-trigger">Clap / Snap Page Turn</option>
+          </select>
+        </div>
+
+        <!-- LIVE AUDIO LEVEL MONITOR -->
+        <div class="space-y-1 pt-1">
+          <div class="flex justify-between text-[10px] text-slate-400">
+            <span>Audio Energy / Volume</span>
+            <span id="audio-energy-text">Mic Off</span>
+          </div>
+          <div class="w-full bg-slate-800 h-2.5 rounded-full overflow-hidden relative border border-slate-700">
+            <div id="audio-level-bar" class="bg-gradient-to-r from-teal-500 to-emerald-400 h-full w-0 transition-all duration-75"></div>
+            <!-- Threshold Marker Line -->
+            <div id="threshold-marker" class="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-10" style="left: 30%;"></div>
+          </div>
+        </div>
+
+        <!-- NOISE SENSITIVITY THRESHOLD -->
+        <div class="space-y-1 pt-1">
+          <div class="flex justify-between text-[11px] text-slate-400">
+            <span>Noise Sensitivity Threshold</span>
+            <span id="sensitivity-val" class="text-slate-300 font-bold">30%</span>
+          </div>
+          <input type="range" id="sensitivity-slider" min="5" max="90" value="30" class="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-rose-500" />
+        </div>
+
+        <!-- LIVE STATUS BANNER -->
+        <div id="audio-status-banner" class="text-xs p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 flex items-center gap-2">
+          <i class="fa-solid fa-circle-info text-slate-500"></i>
+          <span id="audio-status-text">Mic is disabled. Manual scroll ready.</span>
+        </div>
+      </div>
+
+      <!-- SECTION 3: METRONOME CONTROL -->
+      <div class="space-y-3 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800">
+        <label class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+          <i class="fa-solid fa-stopwatch text-amber-400"></i> Practice Metronome
+        </label>
+        
+        <div class="flex items-center justify-between gap-3">
+          <span id="bpm-display" class="text-xl font-black text-amber-400 w-16 text-center bg-slate-900 p-1 rounded border border-slate-800">100</span>
+          <div class="flex-1">
+            <input type="range" id="bpm-slider" min="40" max="220" value="100" class="w-full h-2 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-amber-500" />
+            <div class="flex justify-between text-[10px] text-slate-500 mt-1">
+              <span>40 BPM</span>
+              <span>220 BPM</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECTION 4: DISPLAY APPEARANCE -->
+      <div class="space-y-2 bg-slate-950/60 p-3.5 rounded-xl border border-slate-800">
+        <label class="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+          <i class="fa-solid fa-eye text-blue-400"></i> Sheet Inversion Filter
+        </label>
+        <div class="flex gap-2">
+          <button id="btn-sheet-mode-light" class="flex-1 py-1.5 text-xs font-bold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700">
+            Light Sheet
+          </button>
+          <button id="btn-sheet-mode-dark" class="flex-1 py-1.5 text-xs font-bold rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800">
+            Inverted Dark
+          </button>
+        </div>
+      </div>
+
+      <!-- FOOTER INFO -->
+      <div class="text-[11px] text-slate-500 text-center space-y-1 pt-2 border-t border-slate-800">
+        <p><i class="fa-regular fa-keyboard"></i> <span class="text-slate-400 font-semibold">Space</span> = Play / Pause</p>
+        <p><i class="fa-solid fa-arrows-left-right"></i> <span class="text-slate-400 font-semibold">Arrows</span> = Turn Page</p>
+      </div>
+
+    </aside>
+  </div>
+
+  <!-- APPLICATION LOGIC -->
+  <script>
+    // Initialize PDF.js worker URL
+    if (window.pdfjsLib) {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    }
+
+    // STATE MANAGEMENT
+    const state = {
+      isAutoScrolling: false,
+      scrollSpeed: 0.25,          // Default slow crawl speed
+      subPixelAccumulator: 0,      // Fractional pixel accumulator for jitter-free low speed scrolling
+      startDelaySeconds: 0,
+      scrollIntervalId: null,
+      delayCountdownId: null,
+      
+      // Sheet Content
+      pdfDoc: null,
+      currentPage: 1,
+      totalPages: 1,
+      sheetInverted: false,
+
+      // Audio / Mic Detection Engine
+      micEnabled: false,
+      audioContext: null,
+      analyser: null,
+      mediaStream: null,
+      micMode: 'play-to-scroll',  // 'play-to-scroll' or 'clap-trigger'
+      sensitivityThreshold: 30,  // 0 - 100%
+      lastClapTime: 0,
+      silenceTimer: null,
+      isPlayingDetected: false,
+
+      // Practice Metronome
+      metronomeOn: false,
+      bpm: 100,
+      metronomeInterval: null,
+      audioCtxMetronome: null
+    };
+
+    // DOM ELEMENTS
+    const DOM = {
+      sheetContainer: document.getElementById('sheet-container'),
+      pagesWrapper: document.getElementById('pages-wrapper'),
+      btnToggleScroll: document.getElementById('btn-toggle-scroll'),
+      iconToggleScroll: document.getElementById('icon-toggle-scroll'),
+      textToggleScroll: document.getElementById('text-toggle-scroll'),
+      activeStatusBadge: document.getElementById('active-status-badge'),
+      btnScrollTop: document.getElementById('btn-scroll-top'),
+      
+      // Speed & Delay
+      speedSlider: document.getElementById('speed-slider'),
+      speedVal: document.getElementById('speed-val'),
+      presetButtons: document.querySelectorAll('.btn-preset'),
+      delaySlider: document.getElementById('delay-slider'),
+      delayVal: document.getElementById('delay-val'),
+      delayOverlay: document.getElementById('delay-countdown-overlay'),
+      countdownNumber: document.getElementById('countdown-number'),
+      btnCancelDelay: document.getElementById('btn-cancel-delay'),
+
+      // Mic / Audio
+      btnToggleMic: document.getElementById('btn-toggle-mic'),
+      micModeSelect: document.getElementById('mic-mode-select'),
+      audioLevelBar: document.getElementById('audio-level-bar'),
+      audioEnergyText: document.getElementById('audio-energy-text'),
+      sensitivitySlider: document.getElementById('sensitivity-slider'),
+      sensitivityVal: document.getElementById('sensitivity-val'),
+      thresholdMarker: document.getElementById('threshold-marker'),
+      audioStatusText: document.getElementById('audio-status-text'),
+      audioStatusBanner: document.getElementById('audio-status-banner'),
+
+      // Drawer
+      btnToggleDrawer: document.getElementById('btn-toggle-drawer'),
+      btnCloseDrawer: document.getElementById('btn-close-drawer'),
+      controlsDrawer: document.getElementById('controls-drawer'),
+
+      // Navigation
+      btnPagePrev: document.getElementById('btn-page-prev'),
+      btnPageNext: document.getElementById('btn-page-next'),
+      pageCounter: document.getElementById('page-counter'),
+
+      // Metronome
+      btnMetronomeToggle: document.getElementById('btn-metronome-toggle'),
+      metronomeBtnText: document.getElementById('metronome-btn-text'),
+      bpmSlider: document.getElementById('bpm-slider'),
+      bpmDisplay: document.getElementById('bpm-display'),
+
+      // Sheet Display Mode
+      btnSheetModeLight: document.getElementById('btn-sheet-mode-light'),
+      btnSheetModeDark: document.getElementById('btn-sheet-mode-dark'),
+      fileInput: document.getElementById('file-input')
+    };
+
+    // INITIALIZATION ON WINDOW LOAD
+    window.onload = () => {
+      initEventListeners();
+      renderDefaultSampleSheet();
+      updateUIState();
+    };
+
+    // INITIALIZE ALL EVENT LISTENERS
+    function initEventListeners() {
+      // Toggle Scroll Play/Pause
+      DOM.btnToggleScroll.addEventListener('click', handleToggleScrollClick);
+      DOM.btnScrollTop.addEventListener('click', () => {
+        DOM.sheetContainer.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+
+      // Speed Slider Adjustment
+      DOM.speedSlider.addEventListener('input', (e) => {
+        setSpeedValue(parseFloat(e.target.value));
+      });
+
+      // Speed Preset Buttons
+      DOM.presetButtons.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const speed = parseFloat(btn.getAttribute('data-speed'));
+          setSpeedValue(speed);
+        });
+      });
+
+      // Start Delay Slider Adjustment
+      DOM.delaySlider.addEventListener('input', (e) => {
+        state.startDelaySeconds = parseInt(e.target.value, 10);
+        DOM.delayVal.textContent = state.startDelaySeconds + ' sec';
+      });
+
+      // Cancel Delay Countdown
+      DOM.btnCancelDelay.addEventListener('click', cancelDelayCountdown);
+
+      // Mic Controls
+      DOM.btnToggleMic.addEventListener('click', toggleMicrophoneEngine);
+      DOM.micModeSelect.addEventListener('change', (e) => {
+        state.micMode = e.target.value;
+      });
+      DOM.sensitivitySlider.addEventListener('input', (e) => {
+        state.sensitivityThreshold = parseInt(e.target.value, 10);
+        DOM.sensitivityVal.textContent = state.sensitivityThreshold + '%';
+        DOM.thresholdMarker.style.left = state.sensitivityThreshold + '%';
+      });
+
+      // Metronome
+      DOM.btnMetronomeToggle.addEventListener('click', toggleMetronome);
+      DOM.bpmSlider.addEventListener('input', (e) => {
+        state.bpm = parseInt(e.target.value, 10);
+        DOM.bpmDisplay.textContent = state.bpm;
+        if (state.metronomeOn) {
+          restartMetronome();
+        }
+      });
+
+      // Drawer Toggles
+      DOM.btnToggleDrawer.addEventListener('click', () => {
+        DOM.controlsDrawer.classList.toggle('hidden');
+      });
+      DOM.btnCloseDrawer.addEventListener('click', () => {
+        DOM.controlsDrawer.classList.add('hidden');
+      });
+
+      // File Upload
+      DOM.fileInput.addEventListener('change', handleFileUpload);
+
+      // Page Flipping Buttons
+      DOM.btnPagePrev.addEventListener('click', () => navigatePage(-1));
+      DOM.btnPageNext.addEventListener('click', () => navigatePage(1));
+
+      // Visual Sheet Mode (Invert)
+      DOM.btnSheetModeLight.addEventListener('click', () => setSheetInvert(false));
+      DOM.btnSheetModeDark.addEventListener('click', () => setSheetInvert(true));
+
+      // Keyboard Shortcuts
+      window.addEventListener('keydown', (e) => {
+        if (e.code === 'Space') {
+          e.preventDefault();
+          handleToggleScrollClick();
+        } else if (e.code === 'ArrowRight' || e.code === 'PageDown') {
+          e.preventDefault();
+          navigatePage(1);
+        } else if (e.code === 'ArrowLeft' || e.code === 'PageUp') {
+          e.preventDefault();
+          navigatePage(-1);
+        }
+      });
+    }
+
+    // UPDATE SPEED & HIGHLIGHT PRESETS
+    function setSpeedValue(val) {
+      state.scrollSpeed = val;
+      DOM.speedSlider.value = val;
+      DOM.speedVal.textContent = val.toFixed(2) + 'x';
+
+      // Update preset buttons styling
+      DOM.presetButtons.forEach(btn => {
+        const btnSpeed = parseFloat(btn.getAttribute('data-speed'));
+        if (Math.abs(btnSpeed - val) < 0.01) {
+          btn.className = "btn-preset py-1 bg-emerald-950/80 text-emerald-400 border border-emerald-800 rounded transition font-bold";
+        } else {
+          btn.className = "btn-preset py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded border border-slate-700 transition";
+        }
+      });
+    }
+
+    // HANDLE TOGGLE SCROLL ACTION
+    function handleToggleScrollClick() {
+      if (state.isAutoScrolling) {
+        pauseAutoScroll();
+      } else {
+        if (state.startDelaySeconds > 0) {
+          startDelayCountdownThenScroll();
+        } else {
+          startAutoScroll();
+        }
+      }
+    }
+
+    // DELAY COUNTDOWN BUFFER
+    function startDelayCountdownThenScroll() {
+      let count = state.startDelaySeconds;
+      DOM.countdownNumber.textContent = count;
+      DOM.delayOverlay.classList.remove('hidden');
+
+      state.delayCountdownId = setInterval(() => {
+        count--;
+        if (count > 0) {
+          DOM.countdownNumber.textContent = count;
+        } else {
+          cancelDelayCountdown();
+          startAutoScroll();
+        }
+      }, 1000);
+    }
+
+    function cancelDelayCountdown() {
+      if (state.delayCountdownId) {
+        clearInterval(state.delayCountdownId);
+        state.delayCountdownId = null;
+      }
+      DOM.delayOverlay.classList.add('hidden');
+    }
+
+    // START AUTO-SCROLL ENGINE WITH SUB-PIXEL FRACTIONAL ACCUMULATOR
+    function startAutoScroll() {
+      if (state.isAutoScrolling) return;
+      state.isAutoScrolling = true;
+      state.subPixelAccumulator = 0; // Reset sub-pixel buffer
+
+      let lastTimestamp = performance.now();
+
+      function scrollStep(timestamp) {
+        if (!state.isAutoScrolling) return;
+
+        const deltaTime = (timestamp - lastTimestamp) / 1000;
+        lastTimestamp = timestamp;
+
+        // Base 1.0x speed = 12 pixels per second
+        const basePixelRate = 12;
+        const incrementalPixels = basePixelRate * state.scrollSpeed * deltaTime;
+
+        // Accumulate sub-pixel values for ultra-slow speeds (e.g., 0.01x)
+        state.subPixelAccumulator += incrementalPixels;
+
+        if (state.subPixelAccumulator >= 1.0) {
+          const pixelsToScroll = Math.floor(state.subPixelAccumulator);
+          state.subPixelAccumulator -= pixelsToScroll;
+          DOM.sheetContainer.scrollTop += pixelsToScroll;
+        } else if (state.subPixelAccumulator >= 0.5 && state.scrollSpeed <= 0.1) {
+          // For ultra-slow ranges, scroll in 0.5px sub-steps when supported
+          DOM.sheetContainer.scrollTop += 0.5;
+          state.subPixelAccumulator -= 0.5;
+        }
+
+        // Auto pause at bottom of document
+        if (DOM.sheetContainer.scrollTop + DOM.sheetContainer.clientHeight >= DOM.sheetContainer.scrollHeight - 5) {
+          pauseAutoScroll();
+          return;
+        }
+
+        state.scrollIntervalId = requestAnimationFrame(scrollStep);
+      }
+
+      state.scrollIntervalId = requestAnimationFrame(scrollStep);
+      updateUIState();
+    }
+
+    // PAUSE AUTO-SCROLL
+    function pauseAutoScroll() {
+      state.isAutoScrolling = false;
+      if (state.scrollIntervalId) {
+        cancelAnimationFrame(state.scrollIntervalId);
+        state.scrollIntervalId = null;
+      }
+      updateUIState();
+    }
+
+    // UPDATE ALL UI BADGES & BUTTON STATES
+    function updateUIState() {
+      if (state.isAutoScrolling) {
+        DOM.btnToggleScroll.className = "px-5 py-2.5 rounded-xl font-bold text-sm bg-amber-600 hover:bg-amber-500 active:bg-amber-700 text-white shadow-lg shadow-amber-950/50 transition-all flex items-center gap-2";
+        DOM.iconToggleScroll.className = "fa-solid fa-pause";
+        DOM.textToggleScroll.textContent = "Pause Scroll";
+
+        DOM.activeStatusBadge.textContent = "SCROLLING";
+        DOM.activeStatusBadge.className = "px-2.5 py-0.5 text-xs font-bold rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 active-scroll-badge";
+      } else {
+        DOM.btnToggleScroll.className = "px-5 py-2.5 rounded-xl font-bold text-sm bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white shadow-lg shadow-emerald-950/50 transition-all flex items-center gap-2";
+        DOM.iconToggleScroll.className = "fa-solid fa-play";
+        DOM.textToggleScroll.textContent = "Start Auto-Scroll";
+
+        DOM.activeStatusBadge.textContent = "PAUSED";
+        DOM.activeStatusBadge.className = "px-2 py-0.5 text-xs font-semibold rounded-full bg-slate-800 text-slate-400 border border-slate-700";
+      }
+    }
+
+    // MICROPHONE & AUDIO DETECTION ENGINE
+    async function toggleMicrophoneEngine() {
+      if (state.micEnabled) {
+        // Disable Mic
+        if (state.mediaStream) {
+          state.mediaStream.getTracks().forEach(track => track.stop());
+        }
+        state.micEnabled = false;
+        DOM.btnToggleMic.textContent = "Enable Mic";
+        DOM.btnToggleMic.className = "px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition";
+        DOM.micModeSelect.disabled = true;
+        DOM.audioEnergyText.textContent = "Mic Off";
+        DOM.audioLevelBar.style.width = "0%";
+        DOM.audioStatusText.textContent = "Mic disabled. Manual scroll mode active.";
+        DOM.audioStatusBanner.className = "text-xs p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 flex items-center gap-2";
+      } else {
+        // Enable Mic
+        try {
+          state.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+          state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+          const source = state.audioContext.createMediaStreamSource(state.mediaStream);
+          state.analyser = state.audioContext.createAnalyser();
+          state.analyser.fftSize = 512;
+          source.connect(state.analyser);
+
+          state.micEnabled = true;
+          DOM.btnToggleMic.textContent = "Mic Active";
+          DOM.btnToggleMic.className = "px-2.5 py-1 text-xs font-semibold rounded-lg bg-rose-600 text-white border border-rose-500 transition";
+          DOM.micModeSelect.disabled = false;
+          
+          processAudioFrame();
+        } catch (err) {
+          console.error("Microphone access denied or error:", err);
+          DOM.audioStatusText.textContent = "Microphone access denied or unsupported.";
+          DOM.audioStatusBanner.className = "text-xs p-2.5 rounded-lg bg-rose-950/50 border border-rose-800 text-rose-300 flex items-center gap-2";
+        }
+      }
+    }
+
+    // AUDIO CONTINUOUS FRAME ANALYSIS
+    function processAudioFrame() {
+      if (!state.micEnabled || !state.analyser) return;
+
+      const bufferLength = state.analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
+      state.analyser.getByteFrequencyData(dataArray);
+
+      // Calculate Root Mean Square (RMS) energy level
+      let sum = 0;
+      for (let i = 0; i < bufferLength; i++) {
+        sum += dataArray[i] * dataArray[i];
+      }
+      const rms = Math.sqrt(sum / bufferLength);
+      const normalizedEnergy = Math.min(100, Math.round((rms / 128) * 100));
+
+      // Update UI level meter
+      DOM.audioLevelBar.style.width = normalizedEnergy + '%';
+      DOM.audioEnergyText.textContent = normalizedEnergy + '% Level';
+
+      // AUDIO DETECT LOGIC
+      if (state.micMode === 'play-to-scroll') {
+        // CONTINUOUS PLAYING MODE
+        if (normalizedEnergy >= state.sensitivityThreshold) {
+          // Sound detected above noise threshold!
+          if (!state.isPlayingDetected) {
+            state.isPlayingDetected = true;
+            DOM.audioStatusText.textContent = "Status: Piano Playing Detected — Scrolling!";
+            DOM.audioStatusBanner.className = "text-xs p-2.5 rounded-lg bg-emerald-950/80 border border-emerald-800 text-emerald-300 flex items-center gap-2";
+          }
+
+          // Clear any active silence timer buffer
+          if (state.silenceTimer) {
+            clearTimeout(state.silenceTimer);
+            state.silenceTimer = null;
+          }
+
+          // Automatically trigger auto-scroll if not already running
+          if (!state.isAutoScrolling) {
+            startAutoScroll();
+          }
+        } else {
+          // Below threshold sound (Silence / Pause)
+          if (state.isPlayingDetected && !state.silenceTimer) {
+            // Buffer silence for 1.5 seconds before pausing scroll to handle brief musical rests
+            state.silenceTimer = setTimeout(() => {
+              state.isPlayingDetected = false;
+              if (state.isAutoScrolling) {
+                pauseAutoScroll();
+              }
+              DOM.audioStatusText.textContent = "Status: Silence — Scroll Paused";
+              DOM.audioStatusBanner.className = "text-xs p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 flex items-center gap-2";
+              state.silenceTimer = null;
+            }, 1500);
+          }
+        }
+      } else if (state.micMode === 'clap-trigger') {
+        // CLAP / SNAP TRANSIENT MODE
+        const now = Date.now();
+        if (normalizedEnergy >= state.sensitivityThreshold && (now - state.lastClapTime > 800)) {
+          state.lastClapTime = now;
+          DOM.audioStatusText.textContent = "Clap/Tap Detected! Turning Page...";
+          DOM.audioStatusBanner.className = "text-xs p-2.5 rounded-lg bg-teal-950/80 border border-teal-800 text-teal-300 flex items-center gap-2";
+          
+          navigatePage(1);
+
+          setTimeout(() => {
+            DOM.audioStatusText.textContent = "Listening for Clap/Tap...";
+            DOM.audioStatusBanner.className = "text-xs p-2.5 rounded-lg bg-slate-900 border border-slate-800 text-slate-400 flex items-center gap-2";
+          }, 1200);
+        }
+      }
+
+      requestAnimationFrame(processAudioFrame);
+    }
+
+    // PAGE NAVIGATION LOGIC
+    function navigatePage(direction) {
+      if (state.pdfDoc) {
+        const newPage = state.currentPage + direction;
+        if (newPage >= 1 && newPage <= state.totalPages) {
+          state.currentPage = newPage;
+          const pageElement = document.getElementById(`pdf-page-${state.currentPage}`);
+          if (pageElement) {
+            pageElement.scrollIntoView({ behavior: 'smooth' });
+          }
+          updatePageCounter();
+        }
+      } else {
+        // Sample image or single page scroll jump
+        const scrollAmount = DOM.sheetContainer.clientHeight * 0.8;
+        DOM.sheetContainer.scrollBy({ top: direction * scrollAmount, behavior: 'smooth' });
+      }
+    }
+
+    function updatePageCounter() {
+      DOM.pageCounter.textContent = `Page ${state.currentPage} / ${state.totalPages}`;
+    }
+
+    // PRACTICE METRONOME ENGINE
+    function toggleMetronome() {
+      state.metronomeOn = !state.metronomeOn;
+      if (state.metronomeOn) {
+        DOM.btnMetronomeToggle.className = "px-3.5 py-2 rounded-xl bg-amber-600 text-white border border-amber-500 text-xs font-semibold flex items-center gap-2 transition shadow-lg shadow-amber-950/40";
+        DOM.metronomeBtnText.textContent = "Metronome On";
+        startMetronome();
+      } else {
+        DOM.btnMetronomeToggle.className = "px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-2 transition";
+        DOM.metronomeBtnText.textContent = "Metronome Off";
+        stopMetronome();
+      }
+    }
+
+    function startMetronome() {
+      if (!state.audioCtxMetronome) {
+        state.audioCtxMetronome = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      const intervalMs = (60 / state.bpm) * 1000;
+      state.metronomeInterval = setInterval(() => {
+        playMetronomeClick();
+      }, intervalMs);
+    }
+
+    function stopMetronome() {
+      if (state.metronomeInterval) {
+        clearInterval(state.metronomeInterval);
+        state.metronomeInterval = null;
+      }
+    }
+
+    function restartMetronome() {
+      stopMetronome();
+      startMetronome();
+    }
+
+    function playMetronomeClick() {
+      if (!state.audioCtxMetronome) return;
+      const osc = state.audioCtxMetronome.createOscillator();
+      const gain = state.audioCtxMetronome.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1000, state.audioCtxMetronome.currentTime); // 1kHz beep
+      gain.gain.setValueAtTime(0.3, state.audioCtxMetronome.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, state.audioCtxMetronome.currentTime + 0.05);
+
+      osc.connect(gain);
+      gain.connect(state.audioCtxMetronome.destination);
+      osc.start();
+      osc.stop(state.audioCtxMetronome.currentTime + 0.05);
+    }
+
+    // SHEET INVERSION / DARK MODE
+    function setSheetInvert(inverted) {
+      state.sheetInverted = inverted;
+      if (inverted) {
+        DOM.pagesWrapper.style.filter = "invert(0.9) hue-rotate(180deg)";
+        DOM.btnSheetModeDark.className = "flex-1 py-1.5 text-xs font-bold rounded-lg bg-teal-600 text-white border border-teal-500 shadow";
+        DOM.btnSheetModeLight.className = "flex-1 py-1.5 text-xs font-bold rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700";
+      } else {
+        DOM.pagesWrapper.style.filter = "none";
+        DOM.btnSheetModeLight.className = "flex-1 py-1.5 text-xs font-bold rounded-lg bg-teal-600 text-white border border-teal-500 shadow";
+        DOM.btnSheetModeDark.className = "flex-1 py-1.5 text-xs font-bold rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800";
+      }
+    }
+
+    // FILE UPLOAD HANDLER (PDF or IMAGES)
+    function handleFileUpload(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      DOM.pagesWrapper.innerHTML = '';
+      pauseAutoScroll();
+
+      if (file.type === 'application/pdf') {
+        const fileReader = new FileReader();
+        fileReader.onload = function () {
+          const typedarray = new Uint8Array(this.result);
+          pdfjsLib.getDocument(typedarray).promise.then((pdf) => {
+            state.pdfDoc = pdf;
+            state.totalPages = pdf.numPages;
+            state.currentPage = 1;
+            updatePageCounter();
+
+            for (let i = 1; i <= pdf.numPages; i++) {
+              renderPdfPage(pdf, i);
+            }
+          });
+        };
+        fileReader.readAsArrayBuffer(file);
+      } else if (file.type.startsWith('image/')) {
+        state.pdfDoc = null;
+        state.totalPages = 1;
+        state.currentPage = 1;
+        updatePageCounter();
+
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(file);
+        img.className = "w-full rounded-xl sheet-page-canvas bg-white";
+        DOM.pagesWrapper.appendChild(img);
+      }
+    }
+
+    // RENDER INDIVIDUAL PDF PAGE
+    function renderPdfPage(pdf, pageNum) {
+      pdf.getPage(pageNum).then((page) => {
+        const viewport = page.getViewport({ scale: 1.5 });
+        const canvas = document.createElement('canvas');
+        canvas.id = `pdf-page-${pageNum}`;
+        canvas.className = "w-full rounded-xl sheet-page-canvas bg-white mb-6";
+        const ctx = canvas.getContext('2d');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+
+        const renderContext = {
+          canvasContext: ctx,
+          viewport: viewport
+        };
+        page.render(renderContext);
+        DOM.pagesWrapper.appendChild(canvas);
+      });
+    }
+
+    // DEFAULT SAMPLE MUSIC STAVE GENERATOR (SVG SAMPLE SHEET)
+    function renderDefaultSampleSheet() {
+      DOM.pagesWrapper.innerHTML = `
+        <div class="w-full bg-slate-900 border border-slate-800 text-slate-300 p-4 rounded-xl text-xs flex items-center justify-between">
+          <span class="flex items-center gap-2">
+            <i class="fa-solid fa-circle-info text-teal-400"></i> Sample Sheet Loaded (Ludwig van Beethoven - Moonlight Sonata Op. 27 No. 2)
+          </span>
+          <span class="text-slate-500">Upload PDF for full scores</span>
+        </div>
+        <div class="w-full bg-white text-slate-900 p-8 sm:p-12 rounded-2xl sheet-page-canvas font-serif space-y-10">
+          <!-- TITLE HEADER -->
+          <div class="text-center space-y-2 border-b border-slate-200 pb-6">
+            <h2 class="text-3xl font-black tracking-wide">Piano Sonata No. 14</h2>
+            <p class="text-sm italic text-slate-600">"Moonlight Sonata" - 1st Movement</p>
+            <p class="text-xs font-sans text-slate-500 font-bold uppercase tracking-widest pt-2">L. v. Beethoven, Op. 27, No. 2</p>
+          </div>
+
+          <!-- STAVE SYSTEM 1 -->
+          <div class="space-y-4">
+            <div class="flex justify-between items-center text-xs font-sans font-bold text-slate-700">
+              <span>Adagio sostenuto</span>
+              <span>Si deve suonare tutto questo pezzo delicatissimamente</span>
+            </div>
+            ${generateSvgStave('Treble & Bass Clefs - Bar 1-4', ['C#', 'E', 'G#', 'C#'])}
+          </div>
+
+          <!-- STAVE SYSTEM 2 -->
+          <div class="space-y-4 pt-4">
+            ${generateSvgStave('Bar 5-8', ['G#', 'C#', 'E', 'G#'])}
+          </div>
+
+          <!-- STAVE SYSTEM 3 -->
+          <div class="space-y-4 pt-4">
+            ${generateSvgStave('Bar 9-12', ['A', 'C#', 'E', 'A'])}
+          </div>
+
+          <!-- STAVE SYSTEM 4 -->
+          <div class="space-y-4 pt-4">
+            ${generateSvgStave('Bar 13-16', ['F#', 'A', 'D', 'F#'])}
+          </div>
+        </div>
+      `;
+      state.totalPages = 1;
+      state.currentPage = 1;
+      updatePageCounter();
+    }
+
+    // HELPER TO GENERATE SVG MUSIC STAVES FOR SAMPLE
+    function generateSvgStave(label, notes) {
+      return `
+        <div class="relative w-full">
+          <svg viewBox="0 0 800 120" class="w-full h-auto overflow-visible">
+            <!-- 5 Staff Lines -->
+            <line x1="10" y1="20" x2="790" y2="20" stroke="#1e293b" stroke-width="1.5" />
+            <line x1="10" y1="35" x2="790" y2="35" stroke="#1e293b" stroke-width="1.5" />
+            <line x1="10" y1="50" x2="790" y2="50" stroke="#1e293b" stroke-width="1.5" />
+            <line x1="10" y1="65" x2="790" y2="65" stroke="#1e293b" stroke-width="1.5" />
+            <line x1="10" y1="80" x2="790" y2="80" stroke="#1e293b" stroke-width="1.5" />
+            
+            <!-- Treble Clef Symbol Mock -->
+            <text x="25" y="68" font-family="serif" font-size="52" fill="#0f172a">🎼</text>
+            
+            <!-- Time Signature 3/4 -->
+            <text x="75" y="45" font-family="sans-serif" font-weight="bold" font-size="22" fill="#0f172a">3</text>
+            <text x="75" y="72" font-family="sans-serif" font-weight="bold" font-size="22" fill="#0f172a">4</text>
+
+            <!-- Bar Lines -->
+            <line x1="250" y1="20" x2="250" y2="80" stroke="#334155" stroke-width="2" />
+            <line x1="450" y1="20" x2="450" y2="80" stroke="#334155" stroke-width="2" />
+            <line x1="650" y1="20" x2="650" y2="80" stroke="#334155" stroke-width="2" />
+            <line x1="790" y1="20" x2="790" y2="80" stroke="#334155" stroke-width="3" />
+
+            <!-- Triplet Quarter & Eighth Notes Sample Visuals -->
+            <ellipse cx="140" cy="65" rx="7" ry="5" fill="#0f172a" transform="rotate(-20 140 65)" />
+            <line x1="146" y1="65" x2="146" y2="25" stroke="#0f172a" stroke-width="2" />
+            
+            <ellipse cx="180" cy="50" rx="7" ry="5" fill="#0f172a" transform="rotate(-20 180 50)" />
+            <line x1="186" y1="50" x2="186" y2="10" stroke="#0f172a" stroke-width="2" />
+
+            <ellipse cx="320" cy="35" rx="7" ry="5" fill="#0f172a" transform="rotate(-20 320 35)" />
+            <line x1="326" y1="35" x2="326" y2="5" stroke="#0f172a" stroke-width="2" />
+
+            <ellipse cx="520" cy="50" rx="7" ry="5" fill="#0f172a" transform="rotate(-20 520 50)" />
+            <line x1="526" y1="50" x2="526" y2="15" stroke="#0f172a" stroke-width="2" />
+
+            <ellipse cx="700" cy="65" rx="7" ry="5" fill="#0f172a" transform="rotate(-20 700 65)" />
+            <line x1="706" y1="65" x2="706" y2="25" stroke="#0f172a" stroke-width="2" />
+          </svg>
+        </div>
+      `;
+    }
+  </script>
+</body>
+</html>
